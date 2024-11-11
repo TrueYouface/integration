@@ -195,14 +195,11 @@ class DeliveryCarrier(models.Model):
         help="Allows the ecommerce user to choose a pick-up point as delivery address.",
     )
     fedex_weight_unit = fields.Selection(
-        string="Fedex Weight Unit",
-        default="LB",
-        selection=[("KG", "KG"), ("LB", "LB")]
+        string="Fedex Weight Unit", default="LB", selection=[("KG", "KG"), ("LB", "LB")]
     )
     fedex_label_format = fields.Selection(
         string="Label Format",
         selection=[("URL_ONLY", "URL_ONLY"), ("LABEL", "LABEL")],
-        required=True,
     )
     fedex_pickup_type = fields.Selection(
         string="Pick-up Type",
@@ -230,6 +227,7 @@ class DeliveryCarrier(models.Model):
     )
 
     def shorten_address(self, street, max_length=35):
+        # TODO: remove this function and just split the address for each 35 characters.
         # Step 1: Define common abbreviations
         abbreviations = {
             "Suite": "Ste",
@@ -239,7 +237,7 @@ class DeliveryCarrier(models.Model):
             "Drive": "Dr",
             "Road": "Rd",
             "Court": "Ct",
-            "Place": "Pl"
+            "Place": "Pl",
         }
 
         # Step 2: Apply abbreviations
@@ -253,23 +251,10 @@ class DeliveryCarrier(models.Model):
         return street
 
     def _fedex_payment_type(self):
-        if self.payment_type == 'sender_pays':
+        if self.payment_type == "sender_pays":
             return "SENDER"
         else:
             return "RECIPIENT"
-
-    def get_fedex_credentials(self):
-        url = "https://apis-sandbox.fedex.com/oauth/token"
-        payload = {
-            "grant_type": self.fedex_grant_type,
-            "client_id": self.fedex_client_id,
-            "client_secret": self.fedex_client_secret,
-        }
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-        response = requests.post(url, data=payload, headers=headers)
-        print(response.text)
-        token = json.loads(response.text)["access_token"]
-        return token
 
     def get_shipment_weight(self, picking):
         weight = picking.picking_total_weight
@@ -298,9 +283,7 @@ class DeliveryCarrier(models.Model):
 
     def _prepare_fedex_shipping(self, picking):
         vals = {
-            "accountNumber": {
-                "value": self.fedex_account_number
-            },
+            "accountNumber": {"value": self.fedex_account_number},
             "labelResponseOptions": self.fedex_label_format,
             "requestedShipment": {
                 "shipper": {
@@ -320,13 +303,13 @@ class DeliveryCarrier(models.Model):
                         "streetLines": [
                             self.shorten_address(picking.company_id.partner_id.street)
                         ],
-                        "postalCode": picking.company_id.zip
-                    }
+                        "postalCode": picking.company_id.zip,
+                    },
                 },
                 "recipients": [
                     {
                         "contact": {
-                            "name": picking.partner_id.name,
+                            "personName": picking.partner_id.name,
                             "phoneNumber": self._fedex_phone_number(
                                 picking.partner_id, "national_number"
                             ),
@@ -338,168 +321,82 @@ class DeliveryCarrier(models.Model):
                         "address": {
                             "countryCode": picking.partner_id.country_id.code,
                             "city": picking.partner_id.city,
+                            "stateOrProvinceCode": picking.partner_id.state_id.code,
                             "streetLines": [
                                 self.shorten_address(picking.partner_id.street)
-                                ],
-                            "postalCode": picking.partner_id.zip
-                        }
+                            ],
+                            "postalCode": picking.partner_id.zip,
+                        },
                     }
                 ],
                 "pickupType": self.fedex_pickup_type,
                 "serviceType": self.fedex_service_type,
                 "packagingType": self.fedex_package_type,
-                # "totalWeight": self.get_shipment_weight(picking),
-                "shippingChargesPayment": {
-                    "paymentType": self._fedex_payment_type()
-                },
+                "totalWeight": self.get_shipment_weight(picking),
+                "shippingChargesPayment": {"paymentType": self._fedex_payment_type()},
                 "labelSpecification": {
                     "imageType": self.fedex_label_file_type,
-                    "labelStockType": self.fedex_label_stock_type
+                    "labelStockType": self.fedex_label_stock_type,
                 },
                 "customsClearanceDetail": {
-                    "dutiesPayment": {
-                        "paymentType": self._fedex_payment_type()
-                    },
+                    "dutiesPayment": {"paymentType": self._fedex_payment_type()},
                     "commodities": [
                         {
                             "description": picking.note,
                             "countryOfManufacture": picking.company_id.country_id.code,
-                            "quantity": picking.number_of_packages,
+                            "quantity": picking.carrier_package_count,
                             "quantityUnits": "PCS",
+                            # TODO: Must convert all the prices to the currency of the FedEx's default.
                             "unitPrice": {
-                                "amount": 100,
-                                "currency": "USD"
+                                "amount": 100,  # TODO: change me
+                                "currency": picking.shipping_currency_id.name,  # TODO: change me
                             },
                             "customsValue": {
-                                "amount": picking.carrier_price,
-                                "currency": picking.shipping_currency_id
+                                "amount": 100,#picking.carrier_price, # TODO: not correct, maybe we should add a new field for this.
+                                "currency": picking.shipping_currency_id.name,
                             },
                             "weight": {
                                 "units": self.fedex_weight_unit,
-                                "value": picking.weight
-                            }
+                                "value": picking.weight,
+                            },
                         }
-                    ]
+                    ],
                 },
                 "requestedPackageLineItems": [
                     {
                         "weight": {
                             "units": self.fedex_weight_unit,
-                            "value": picking.weight
+                            "value": picking.weight,
                         }
                     }
-                ]
-            }
-        }
-        vals_test = {
-          "labelResponseOptions": "LABEL",
-          "requestedShipment": {
-            "shipper": {
-              "contact": {
-                "phoneNumber": 1234567890,
-                "companyName": "Shipper Company Name",
-                "emailAddress": "sample@company.com",
-                "phoneExtension": "90"
-              },
-              "address": {
-                "streetLines": [
-                  "SHIPPER STREET LINE 1"
                 ],
-                "city": "Ankara",
-                "postalCode": "06935",
-                "countryCode": "TR"
-              }
             },
-            "recipients": [
-              {
-                "contact": {
-                  "phoneNumber": 1234567890,
-                  "companyName": "Recipient Company Name",
-                  "emailAddress":"sample@company.com",
-                  "phoneExtension":"966"
-                },
-                "address": {
-                  "streetLines": [
-                    "RECIPIENT STREET LINE 1",
-                    "RECIPIENT STREET LINE 2",
-                    "RECIPIENT STREET LINE 3"
-                  ],
-                  "city": "Riyadh",
-                  "stateOrProvinceCode": "BC",
-                  "postalCode": "06800",
-                  "countryCode": "SA"
-                }
-              }
-            ],
-            "serviceType": "INTERNATIONAL_ECONOMY",
-            "packagingType": "FEDEX_BOX",
-            "pickupType": "DROPOFF_AT_FEDEX_LOCATION",
-            "shippingChargesPayment": {
-              "paymentType": "SENDER"
-            },
-            "labelSpecification": {
-              "imageType": "PDF",
-              "labelStockType": "STOCK_4X6"
-            },
-            "customsClearanceDetail": {
-              "dutiesPayment": {
-                "paymentType": "SENDER"
-              },
-              "commodities": [
-                {
-                  "description": "Commodity description",
-                  "countryOfManufacture": "US",
-                  "quantity": 3,
-                  "quantityUnits": "PCS",
-                  "unitPrice": {
-                    "amount": 100,
-                    "currency": "USD"
-                  },
-                  "customsValue": {
-                    "amount": 300,
-                    "currency": "USD"
-                  },
-                  "weight": {
-                    "units": "LB",
-                    "value": 20
-                  }
-                }
-              ]
-            },
-            "requestedPackageLineItems": [
-              {
-                "weight": {
-                  "value": 20,
-                  "units": "LB"
-                }
-              }
-            ]
-          },
-          "accountNumber": {
-            "value": "740561073"
-          }
         }
         return vals
 
     def fedex_send_shipping(self, pickings):
-        url = "https://apis-sandbox.fedex.com/ship/v1/shipments"
-        headers = {
-            "Content-Type": "application/json",
-            "X-locale": "en_US",
-            "Authorization": "Bearer " + self.get_fedex_credentials(),
-        }
+        # url = "https://apis-sandbox.fedex.com/ship/v1/shipments"
+        # headers = {
+        #     "Content-Type": "application/json",
+        #     "X-locale": "en_US",
+        #     "Authorization": "Bearer " + self.get_fedex_credentials(),
+        # }
+        fedex_request = FedexRequest(
+            prod_environment=False,
+            grant_type=self.fedex_grant_type,
+            api_key=self.fedex_client_id,
+            secret_key=self.fedex_client_secret,
+            account_number=self.fedex_account_number,
+        )
+
         result = []
         for picking in pickings:
-            payload = self._prepare_fedex_shipping(
-                picking
-            )
-            response = requests.post(url, data=payload, headers=headers)
+            payload = self._prepare_fedex_shipping(picking)
+            response = fedex_request.shipment(payload)
             response_data = response.json()
             if response_data["errors"]:
-                print(response_data)
                 break
             else:
                 # Extract the masterTrackingNumber
                 master_tracking_number = response_data["output"]
-                print(master_tracking_number)
         return True
